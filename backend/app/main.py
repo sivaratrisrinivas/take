@@ -69,7 +69,7 @@ runner = Runner(
 # Gemini client for image generation (separate from ADK)
 image_client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
 
-IMAGE_MODEL = "gemini-2.0-flash-exp-image-generation"
+IMAGE_MODEL = "gemini-3.1-flash-image-preview"
 
 # ---------------------------------------------------------------------------
 # Health check (kept for ops / Docker)
@@ -86,17 +86,19 @@ async def health() -> dict[str, str]:
 
 class StoryboardRequest(BaseModel):
     style: str
+    movies: str = ""
+    scene_prompt: str = ""
     narration: str
     camera: str = ""
     lighting: str = ""
-    frame_base64: str = ""  # Optional: camera frame as reference
+    frame_base64: str = ""
 
 
 STORYBOARD_PROMPT_TEMPLATE = """You are a storyboard artist for a cinematic film.
 Generate a SINGLE storyboard frame illustration — a wide cinematic shot (16:9 aspect ratio).
 
-STYLE: {style}
-SCENE NARRATION: {narration}
+DIRECTOR STYLE: {style}
+{movies_line}{scene_line}SCENE NARRATION: {narration}
 CAMERA DIRECTION: {camera}
 LIGHTING & COLOR: {lighting}
 
@@ -104,7 +106,7 @@ Create a beautiful, cinematic storyboard illustration that captures this exact m
 The image should look like a professional film storyboard frame with:
 - Dramatic composition matching the camera direction
 - Color palette matching the lighting description
-- The mood and atmosphere of the chosen cinematic style
+- The mood and atmosphere of the named director's visual style
 - Wide 16:9 cinematic framing
 
 DO NOT include any text, labels, or annotations in the image.
@@ -116,9 +118,13 @@ async def generate_storyboard(req: StoryboardRequest):
     """Generate a cinematic storyboard frame using Gemini image generation."""
     logger.info("Storyboard request: style=%s", req.style)
 
+    movies_line = f"REFERENCE FILMS: {req.movies}\n" if req.movies else ""
+    scene_line = f"USER'S CREATIVE BRIEF: {req.scene_prompt}\n" if req.scene_prompt else ""
     prompt = STORYBOARD_PROMPT_TEMPLATE.format(
         style=req.style,
-        narration=req.narration[:500],  # Limit for token budget
+        movies_line=movies_line,
+        scene_line=scene_line,
+        narration=req.narration[:500],
         camera=req.camera or "wide establishing shot",
         lighting=req.lighting or "natural cinematic lighting",
     )
@@ -143,7 +149,10 @@ async def generate_storyboard(req: StoryboardRequest):
             model=IMAGE_MODEL,
             contents=contents,
             config=types.GenerateContentConfig(
-                response_modalities=["IMAGE", "TEXT"],
+                response_modalities=["TEXT", "IMAGE"],
+                image_config=types.ImageConfig(
+                    aspect_ratio="16:9",
+                ),
             ),
         )
 
@@ -175,15 +184,17 @@ VEO_MODEL = "veo-3.1-generate-preview"
 
 class VideoRequest(BaseModel):
     style: str
+    movies: str = ""
+    scene_prompt: str = ""
     narration: str = ""
     camera: str = ""
     lighting: str = ""
     music: str = ""
-    storyboard_image_b64: str = ""  # first storyboard frame as reference
+    storyboard_image_b64: str = ""
 
 
-VIDEO_PROMPT_TEMPLATE = """Cinematic short film in the "{style}" style.
-
+VIDEO_PROMPT_TEMPLATE = """Cinematic short film directed by {style}.
+{movies_line}{scene_line}
 SCENE: {narration}
 
 CAMERA DIRECTION: {camera}
@@ -200,8 +211,12 @@ async def generate_video(req: VideoRequest):
     """Generate a cinematic video clip using Veo 3.1."""
     logger.info("Video generation request: style=%s", req.style)
 
+    movies_line = f"Visual reference: {req.movies}\n" if req.movies else ""
+    scene_line = f"Creative brief: {req.scene_prompt}\n" if req.scene_prompt else ""
     prompt = VIDEO_PROMPT_TEMPLATE.format(
         style=req.style,
+        movies_line=movies_line,
+        scene_line=scene_line,
         narration=req.narration[:600] or "A cinematic scene",
         camera=req.camera[:200] or "smooth tracking shot",
         lighting=req.lighting[:200] or "cinematic lighting",
@@ -218,17 +233,26 @@ async def generate_video(req: VideoRequest):
             ),
         }
 
-        # Use storyboard image as reference if available
+        # Use storyboard image as reference if available (compress for Veo)
         if req.storyboard_image_b64:
             try:
+                from io import BytesIO
+                from PIL import Image as PILImage
+
                 img_bytes = base64.b64decode(req.storyboard_image_b64)
+                img = PILImage.open(BytesIO(img_bytes))
+                img.thumbnail((1024, 1024), PILImage.LANCZOS)
+                buf = BytesIO()
+                img.save(buf, format="JPEG", quality=80)
+                compressed = buf.getvalue()
+
                 kwargs["image"] = types.Image(
-                    image_bytes=img_bytes,
-                    mime_type="image/png",
+                    image_bytes=compressed,
+                    mime_type="image/jpeg",
                 )
-                logger.info("Using storyboard image as Veo reference (%d bytes)", len(img_bytes))
+                logger.info("Using storyboard image as Veo reference (%d bytes, compressed from %d)", len(compressed), len(img_bytes))
             except Exception as img_err:
-                logger.warning("Could not decode storyboard image: %s", img_err)
+                logger.warning("Could not process storyboard image: %s", img_err)
 
         # Start async video generation
         import time
@@ -254,14 +278,17 @@ async def generate_video(req: VideoRequest):
             logger.error("Veo generation timed out after %d polls", max_polls)
             return {"error": "Video generation timed out"}
 
-        # Download the generated video
+        # Validate response
+        if not operation.response or not operation.response.generated_videos:
+            logger.error("Veo returned no videos. Response: %s", operation.response)
+            return {"error": "Video generation returned no results — the prompt may have been filtered or the reference image too large."}
+
         generated_video = operation.response.generated_videos[0]
         await asyncio.to_thread(
             image_client.files.download,
             file=generated_video.video,
         )
 
-        # Save to temp file and read bytes
         import tempfile
         with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
             tmp_path = tmp.name

@@ -1,10 +1,10 @@
 # take
 
-Point your phone at anything — AI instantly generates a cinematic short film in the style you choose.
+Point your phone at anything — name any film director — AI generates a cinematic short film in their style.
 
 ## What is this?
 
-**take** turns your phone's camera into a cinematic film director. Point it at literally anything — your coffee cup, a street scene, your dog — pick a film style like "Wes Anderson" or "Noir Thriller," and the AI will:
+**take** turns your phone's camera into a cinematic film director. Point it at literally anything — your coffee cup, a street scene, your dog — type any director's name (Kubrick, Spielberg, Tarantino, Miyazaki, anyone), optionally add reference movies and a creative brief, and the AI will:
 
 1. **Narrate your scene** in the chosen cinematic style (you hear it live)
 2. **Tell you how to shoot it** — camera angles, movements, framing
@@ -25,19 +25,22 @@ Open `localhost:5173` in your browser. Your camera turns on automatically.
 ### 2. Start a session
 Click **Start Directing**. This opens a live connection between your camera and the AI.
 
-### 3. Pick a style
-Choose one of 6 cinematic styles: **Wes Anderson**, **Noir**, **Nature Documentary**, **Sci-Fi**, **Heist**, or **Horror**.
+### 3. Set the scene
+Three input fields, only the first is required:
+- **Director** — Wes Anderson, David Fincher, Akira Kurosawa, Greta Gerwig, anyone
+- **Films** (optional) — specific movie references like "Blade Runner, Interstellar" to sharpen the visual direction
+- **Scene** (optional) — a creative brief describing what you want, e.g., "a detective walking through neon-lit rain-soaked streets"
 
 ### 4. AI watches and directs (live)
-The AI sees your camera feed in real-time (1 frame per second). It starts speaking — narrating your scene in the chosen film style, telling you how to move the camera, what lighting to use, and what music would fit.
+The AI sees your camera feed in real-time (1 frame per second). It starts speaking — narrating your scene in the chosen film style, telling you how to move the camera, what lighting to use, and what music would fit. If you provided a creative brief, it weaves that vision into what it sees.
 
 ### 5. Swipe through the director's cards
 When you end the session, the AI's output is parsed into swipeable cards:
-- 🎬 **Narration** — the spoken scene description
-- 📹 **Camera** — specific shot directions (dolly, tracking, close-up, etc.)
-- 💡 **Lighting & Color** — color grading and mood
-- 🎵 **Music & Sound** — soundtrack and sound design cues
-- 🖼️ **Storyboard** — 3 AI-generated frames showing the final film
+- **Narration** — the spoken scene description
+- **Camera** — specific shot directions (dolly, tracking, close-up, etc.)
+- **Lighting & Color** — color grading and mood
+- **Music & Sound** — soundtrack and sound design cues
+- **Storyboard** — 3 AI-generated frames showing the final film
 
 ### 6. Generate a video
 After the storyboard loads, click **Generate Video**. The app sends everything (narration, camera directions, lighting, music, and a storyboard frame) to Google's Veo 3.1 model, which creates an 8-second cinematic video clip. This takes about 1-3 minutes.
@@ -53,9 +56,10 @@ Swipe to the Video card. Your cinematic short film plays inline with full contro
 | Backend | Python, FastAPI |
 | AI Agent | Google ADK (Agent Development Kit) |
 | Live Streaming | Gemini Live API (bidirectional audio/video) |
-| Image Generation | Gemini 2.0 Flash |
+| Image Generation | Nano Banana 2 (Gemini 3.1 Flash Image Preview) |
 | Video Generation | Google Veo 3.1 |
 | Communication | WebSocket (real-time), REST (storyboard + video) |
+| Testing | pytest + pytest-asyncio (backend), Vitest (frontend) |
 
 ## Project structure
 
@@ -65,16 +69,24 @@ Swipe to the Video card. Your cinematic short film plays inline with full contro
 │   │   ├── main.py                  # FastAPI server (WebSocket + REST endpoints)
 │   │   └── take_agent/
 │   │       └── agent.py             # AI film director agent definition
+│   ├── tests/
+│   │   ├── test_unit.py             # Unit tests (models, prompts, agent config)
+│   │   └── test_integration.py      # Integration tests (HTTP endpoints, mocked APIs)
 │   ├── .env.example                 # Environment variable template
+│   ├── pytest.ini                   # Pytest configuration
 │   └── requirements.txt             # Python dependencies
 ├── frontend/
 │   ├── src/
 │   │   ├── App.jsx                  # Camera, WebSocket, audio playback, state
 │   │   ├── api.js                   # WebSocket connection helpers
+│   │   ├── parseTranscript.js       # AI transcript parser (narration/camera/lighting/music)
 │   │   ├── index.css                # Dark cinematic theme + animations
+│   │   ├── __tests__/
+│   │   │   ├── parseTranscript.test.js  # Transcript parser tests
+│   │   │   └── api.test.js              # WebSocket helper tests
 │   │   └── components/
 │   │       ├── OutputPanel.jsx      # Swipeable card stack + video player
-│   │       └── StyleSelector.jsx    # 6 film style buttons
+│   │       └── StyleSelector.jsx    # Director / movies / scene input
 │   ├── index.html
 │   └── package.json
 ├── Dockerfile
@@ -112,13 +124,43 @@ npm run dev
 
 Runs on `http://localhost:5173`.
 
+## Testing
+
+### Backend (28 tests)
+
+```bash
+cd backend
+source .venv/bin/activate
+python -m pytest tests/ -v
+```
+
+Tests cover:
+- Agent definition and instruction validation
+- Request model validation (required/optional fields)
+- Prompt template rendering (with and without optional fields)
+- Health check endpoint
+- CORS preflight
+- Storyboard endpoint (success, error, no image, with frame reference)
+- Video endpoint (success, no results, API error, validation)
+
+### Frontend (16 tests)
+
+```bash
+cd frontend
+npm test
+```
+
+Tests cover:
+- Transcript parser: spoken markers, keyword fallback, markdown stripping, edge cases
+- WebSocket helpers: sendText, sendImage, sendAudio, closed socket handling
+
 ## API endpoints
 
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/health` | Health check |
 | `WebSocket` | `/ws/{user_id}/{session_id}` | Live bidirectional streaming (camera → AI → audio) |
-| `POST` | `/api/storyboard` | Generate a storyboard frame (Gemini image generation) |
+| `POST` | `/api/storyboard` | Generate a storyboard frame (Nano Banana 2) |
 | `POST` | `/api/generate-video` | Generate a cinematic video clip (Veo 3.1) |
 
 ## Environment variables

@@ -30,3 +30,16 @@ build/
 # Temp files
 *.tmp
 *.log
+
+# Test / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+*.cover
+.mypy_cache/
+coverage/
+*.lcov
+
+# Cursor / agent (local)
+.cursor/
+*.local

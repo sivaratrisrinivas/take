@@ -1,30 +1,63 @@
-import { useState } from "react"
+import { useState, useRef, useEffect } from "react"
 
-const STYLES = [
-  { id: "wes anderson", label: "Wes Anderson", color: "#E8A87C" },
-  { id: "noir",         label: "Noir",         color: "#8B8B8B" },
-  { id: "nature doc",   label: "Nature Doc",   color: "#56AB91" },
-  { id: "sci-fi",       label: "Sci-Fi",       color: "#7B68EE" },
-  { id: "heist",        label: "Heist",        color: "#E85D75" },
-  { id: "horror",       label: "Horror",       color: "#6B3FA0" },
-]
+export default function StyleSelector({ onSelect }) {
+  const [director, setDirector] = useState("")
+  const [movies, setMovies] = useState("")
+  const [scene, setScene] = useState("")
+  const inputRef = useRef(null)
 
-export default function StyleSelector({ selected, onSelect, disabled }) {
+  useEffect(() => {
+    inputRef.current?.focus()
+  }, [])
+
+  const handleSubmit = (e) => {
+    e?.preventDefault()
+    const d = director.trim()
+    if (d) onSelect({ director: d, movies: movies.trim(), scene: scene.trim() })
+  }
+
   return (
-    <div className="styles">
-      <span className="styles__label">Style</span>
-      {STYLES.map((s) => (
+    <div className="styles-screen">
+      <h2 className="styles-screen__title">Set the scene</h2>
+      <form className="styles-screen__form" onSubmit={handleSubmit}>
+        <input
+          ref={inputRef}
+          type="text"
+          className="director-input"
+          value={director}
+          onChange={(e) => setDirector(e.target.value)}
+          placeholder="Director — Kubrick, Spielberg, Tarantino…"
+          autoComplete="off"
+          spellCheck="false"
+        />
+        <input
+          type="text"
+          className="director-input director-input--movies"
+          value={movies}
+          onChange={(e) => setMovies(e.target.value)}
+          placeholder="Films — Blade Runner, Interstellar… (optional)"
+          autoComplete="off"
+          spellCheck="false"
+        />
+        <textarea
+          className="director-input director-input--scene"
+          value={scene}
+          onChange={(e) => setScene(e.target.value)}
+          placeholder="Describe your scene… (optional)"
+          rows={3}
+          spellCheck="false"
+        />
         <button
-          key={s.id}
-          type="button"
-          disabled={disabled}
-          onClick={() => onSelect(s.id)}
-          className={`style-btn ${selected === s.id ? "style-btn--active" : ""}`}
-          style={{ "--style-color": s.color }}
+          type="submit"
+          className="btn-go"
+          disabled={!director.trim()}
         >
-          {s.label}
+          Direct
         </button>
-      ))}
+      </form>
+      <p className="styles-screen__hint">
+        Director is required. Movies and scene description sharpen the output.
+      </p>
     </div>
   )
 }
