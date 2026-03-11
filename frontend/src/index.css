@@ -333,6 +333,12 @@ body { overflow: hidden; }
   color: var(--text);
 }
 
+.directing__reconnect {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-muted, rgba(255, 255, 255, 0.6));
+}
+
 .directing__bottom {
   display: flex;
   justify-content: center;

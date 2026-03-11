@@ -58,9 +58,7 @@ class AudioPlayer {
       const startAt = Math.max(now, this.nextStartTime)
       source.start(startAt)
       this.nextStartTime = startAt + buffer.duration
-    } catch (err) {
-      console.warn("Audio playback error:", err)
-    }
+    } catch {}
   }
 
   stop() {
@@ -77,9 +75,13 @@ export default function App() {
   const canvasRef = useRef(null)
   const wsRef = useRef(null)
   const frameIntervalRef = useRef(null)
+  const closeTimeoutRef = useRef(null)
   const streamRef = useRef(null)
   const audioPlayerRef = useRef(new AudioPlayer())
   const storyboardGeneratedRef = useRef(false)
+  const styleRef = useRef({ director: "", movies: "", scene: "" })
+  const manualCloseRef = useRef(false)
+  const screenRef = useRef(SCREEN.IDLE)
 
   const [screen, setScreen] = useState(SCREEN.IDLE)
   const [cameraReady, setCameraReady] = useState(false)
@@ -90,6 +92,11 @@ export default function App() {
   const [events, setEvents] = useState([])
   const [storyboard, setStoryboard] = useState(null)
   const [video, setVideo] = useState(null)
+  const [reconnecting, setReconnecting] = useState(false)
+
+  useEffect(() => {
+    screenRef.current = screen
+  }, [screen])
 
   useEffect(() => {
     let active = true
@@ -151,81 +158,131 @@ export default function App() {
     () =>
       events
         .map((e) => {
+          if (e?.outputTranscription?.text) return e.outputTranscription.text
           const parts = e?.content?.parts
-          if (parts) return parts.map((p) => p.text || "").join("")
-          if (e?.serverContent?.outputTranscription?.text) return e.serverContent.outputTranscription.text
-          if (e?.transcript) return e.transcript
+          if (parts) {
+            const t = parts.map((p) => p.text || "").join("")
+            if (t) return t
+          }
           return ""
         })
         .filter(Boolean)
-        .join(""),
+        .join(" "),
     [events],
   )
 
   const parsedSections = useMemo(() => parseTranscript(transcriptText), [transcriptText])
 
-  /* ── Connect ── */
+  const buildStyleMessage = useCallback((director, movies, scene) => {
+    const movieRef = movies ? ` Reference films: ${movies}.` : ""
+    const sceneRef = scene ? ` The user's creative brief: "${scene}".` : ""
+    return `The user wants you to direct in the style of ${director}.${movieRef}${sceneRef} Channel this filmmaker's exact visual language, camera work, color palette, and storytelling. Start narrating now.`
+  }, [])
+
+  /* ── Connect (and reconnect when Cloud Run closes after ~60 min) ── */
+  const connectSession = useCallback(
+    (isReconnect = false) => {
+      const userId = "user-" + uid()
+      const sessionId = "session-" + uid()
+      const { director, movies, scene } = styleRef.current
+
+      const ws = createSession(userId, sessionId, {
+        onOpen: (openWs) => {
+          frameIntervalRef.current = setInterval(() => {
+            const frame = captureFrame()
+            if (frame) sendImage(openWs, frame)
+          }, 1000)
+          if (isReconnect && director) {
+            setScreen(SCREEN.DIRECTING)
+            setReconnecting(false)
+            sendText(openWs, buildStyleMessage(director, movies, scene))
+          } else {
+            setScreen(SCREEN.PICK_STYLE)
+          }
+        },
+        onEvent: (event) => {
+          setEvents((prev) => [...prev, event])
+          processAudioFromEvent(event)
+        },
+        onClose: () => {
+          clearInterval(frameIntervalRef.current)
+          wsRef.current = null
+
+          if (manualCloseRef.current) {
+            manualCloseRef.current = false
+            setReconnecting(false)
+            audioPlayerRef.current.stop()
+            audioPlayerRef.current = new AudioPlayer()
+            setScreen(SCREEN.REVIEW)
+            return
+          }
+
+          if (screenRef.current === SCREEN.DIRECTING) {
+            setReconnecting(true)
+            setTimeout(() => {
+              connectSession(true)
+            }, 2000)
+            return
+          }
+
+          setScreen(SCREEN.REVIEW)
+        },
+      })
+
+      wsRef.current = ws
+    },
+    [captureFrame, processAudioFromEvent, buildStyleMessage],
+  )
+
   const handleStart = useCallback(() => {
     setEvents([])
     setStoryboard(null)
     setVideo(null)
+    setReconnecting(false)
     storyboardGeneratedRef.current = false
-
-    const userId = "user-" + uid()
-    const sessionId = "session-" + uid()
-
-    const ws = createSession(userId, sessionId, {
-      onOpen: () => {
-        setScreen(SCREEN.PICK_STYLE)
-        frameIntervalRef.current = setInterval(() => {
-          const frame = captureFrame()
-          if (frame) sendImage(ws, frame)
-        }, 1000)
-      },
-      onEvent: (event) => {
-        setEvents((prev) => [...prev, event])
-        processAudioFromEvent(event)
-      },
-      onClose: () => {
-        clearInterval(frameIntervalRef.current)
-        setScreen((prev) => (prev === SCREEN.DIRECTING ? SCREEN.REVIEW : prev))
-      },
-    })
-
-    wsRef.current = ws
-  }, [captureFrame, processAudioFromEvent])
+    styleRef.current = { director: "", movies: "", scene: "" }
+    connectSession(false)
+  }, [connectSession])
 
   /* ── End session ── */
   const handleEnd = useCallback(() => {
-    wsRef.current?.close()
-    wsRef.current = null
+    manualCloseRef.current = true
     clearInterval(frameIntervalRef.current)
-    audioPlayerRef.current.stop()
-    audioPlayerRef.current = new AudioPlayer()
-    setScreen(SCREEN.REVIEW)
+    setReconnecting(false)
+
+    // Give Vertex a brief chance to flush the last outputTranscription chunks.
+    clearTimeout(closeTimeoutRef.current)
+    closeTimeoutRef.current = setTimeout(() => {
+      wsRef.current?.close()
+      if (!wsRef.current) {
+        audioPlayerRef.current.stop()
+        audioPlayerRef.current = new AudioPlayer()
+        setScreen(SCREEN.REVIEW)
+      }
+    }, 2000)
   }, [])
 
   /* ── Style selection ── */
   const handleStyleSelect = useCallback(
     ({ director, movies, scene }) => {
+      styleRef.current = { director, movies, scene }
       setSelectedStyle(director)
       setSelectedMovies(movies)
       setSelectedScene(scene)
       setScreen(SCREEN.DIRECTING)
       if (wsRef.current?.readyState === WebSocket.OPEN) {
-        const movieRef = movies ? ` Reference films: ${movies}.` : ""
-        const sceneRef = scene ? ` The user's creative brief: "${scene}".` : ""
-        sendText(
-          wsRef.current,
-          `The user wants you to direct in the style of ${director}.${movieRef}${sceneRef} Channel this filmmaker's exact visual language, camera work, color palette, and storytelling. Start narrating now.`,
-        )
+        sendText(wsRef.current, buildStyleMessage(director, movies, scene))
       }
     },
-    [],
+    [buildStyleMessage],
   )
 
   /* ── New session ── */
   const handleNewSession = useCallback(() => {
+    clearTimeout(closeTimeoutRef.current)
+    manualCloseRef.current = false
+    wsRef.current?.close()
+    wsRef.current = null
     setScreen(SCREEN.IDLE)
     setSelectedStyle("")
     setSelectedMovies("")
@@ -331,6 +388,7 @@ export default function App() {
 
   useEffect(() => {
     return () => {
+      clearTimeout(closeTimeoutRef.current)
       wsRef.current?.close()
       clearInterval(frameIntervalRef.current)
       audioPlayerRef.current.stop()
@@ -386,6 +444,11 @@ export default function App() {
                 {selectedStyle}{selectedMovies ? ` · ${selectedMovies}` : ""}
               </span>
             </div>
+            {reconnecting && (
+              <div className="directing__reconnect" aria-live="polite">
+                Reconnecting…
+              </div>
+            )}
           </div>
           <div className="directing__bottom">
             <button className="btn-end" onClick={handleEnd}>

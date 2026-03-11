@@ -43,3 +43,6 @@ coverage/
 # Cursor / agent (local)
 .cursor/
 *.local
+
+# Firebase local cache
+.firebase/

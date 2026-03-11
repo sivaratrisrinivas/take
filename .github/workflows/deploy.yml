@@ -1,0 +1,83 @@
+# Deploy take: Cloud Run (backend) + Firebase Hosting (frontend)
+# Runs on push to main. Requires GitHub secrets: GCP_SA_KEY, FIREBASE_TOKEN.
+# Variables: GCP_PROJECT_ID, FIREBASE_SITE_ID (optional; defaults to project ID).
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+env:
+  REGION: us-central1
+  SERVICE_NAME: take-backend
+
+jobs:
+  deploy-backend:
+    runs-on: ubuntu-latest
+    outputs:
+      backend_url: ${{ steps.url.outputs.backend_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - id: project
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+
+      - id: build
+        run: |
+          IMAGE=${{ env.REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/take/${{ env.SERVICE_NAME }}:sha-${{ github.sha }}
+          echo "image=$IMAGE" >> $GITHUB_OUTPUT
+          gcloud builds submit --tag "$IMAGE" --timeout=600 .
+
+      - id: deploy
+        run: |
+          IMAGE=${{ steps.build.outputs.image }}
+          FIREBASE_SITE=${{ vars.FIREBASE_SITE_ID || vars.GCP_PROJECT_ID }}
+          CORS_ORIGINS="https://${FIREBASE_SITE}.web.app"
+          gcloud run deploy ${{ env.SERVICE_NAME }} \
+            --image "$IMAGE" \
+            --region ${{ env.REGION }} \
+            --platform managed \
+            --allow-unauthenticated \
+            --set-env-vars "GOOGLE_GENAI_USE_VERTEXAI=true,GOOGLE_CLOUD_PROJECT=${{ vars.GCP_PROJECT_ID }},GOOGLE_CLOUD_LOCATION=${{ env.REGION }},CORS_ORIGINS=${CORS_ORIGINS}" \
+            --timeout 3600 \
+            --min-instances 0 \
+            --max-instances 5
+
+      - id: url
+        run: |
+          echo "backend_url=$(gcloud run services describe ${{ env.SERVICE_NAME }} --region ${{ env.REGION }} --format='value(status.url)')" >> $GITHUB_OUTPUT
+
+  deploy-frontend:
+    needs: deploy-backend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build frontend
+        working-directory: frontend
+        env:
+          BACKEND_URL: ${{ needs.deploy-backend.outputs.backend_url }}
+        run: |
+          # BACKEND_URL is https://...; frontend needs wss for WebSocket
+          VITE_API_URL="$BACKEND_URL"
+          VITE_WS_URL="${BACKEND_URL/https/wss}"
+          npm ci
+          VITE_API_URL="$VITE_API_URL" VITE_WS_URL="$VITE_WS_URL" npm run build -- --mode production
+
+      - name: Deploy to Firebase Hosting
+        run: |
+          npm i -g firebase-tools
+          firebase deploy --only hosting --token "${{ secrets.FIREBASE_TOKEN }}" --project "${{ vars.GCP_PROJECT_ID }}"

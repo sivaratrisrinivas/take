@@ -4,9 +4,7 @@ const WS_BASE_URL = import.meta.env.VITE_WS_URL ?? "ws://localhost:8000"
  * Open a bidi-streaming WebSocket to the ADK backend.
  * @param {string} userId
  * @param {string} sessionId
- * @param {(event: object) => void} onEvent  - fired for every ADK event
- * @param {() => void}            onOpen
- * @param {() => void}            onClose
+ * @param {{ onEvent: (event: object) => void, onOpen: (ws: WebSocket) => void, onClose: () => void }} callbacks
  * @returns {WebSocket}
  */
 export function createSession(userId, sessionId, { onEvent, onOpen, onClose }) {
@@ -14,27 +12,21 @@ export function createSession(userId, sessionId, { onEvent, onOpen, onClose }) {
   const ws = new WebSocket(url)
 
   ws.onopen = () => {
-    console.log("[ws] connected", url)
-    onOpen?.()
+    onOpen?.(ws)
   }
 
   ws.onmessage = (msg) => {
     try {
       const event = JSON.parse(msg.data)
       onEvent?.(event)
-    } catch {
-      console.warn("[ws] non-JSON message", msg.data)
-    }
+    } catch {}
   }
 
   ws.onclose = () => {
-    console.log("[ws] disconnected")
     onClose?.()
   }
 
-  ws.onerror = (err) => {
-    console.error("[ws] error", err)
-  }
+  ws.onerror = () => {}
 
   return ws
 }

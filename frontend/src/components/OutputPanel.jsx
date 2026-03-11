@@ -9,6 +9,23 @@ const CARD_META = {
   video:      { label: "Video",           emoji: "🎥" },
 }
 
+function renderCardText(text, className) {
+  const paragraphs = text
+    .split(/(?<=[.!?])\s+/)
+    .reduce((acc, sentence, index) => {
+      if (!sentence.trim()) return acc
+      const bucket = Math.floor(index / 2)
+      acc[bucket] = acc[bucket] ? `${acc[bucket]} ${sentence}` : sentence
+      return acc
+    }, [])
+
+  return paragraphs.map((paragraph, index) => (
+    <p key={index} className={className}>
+      {paragraph}
+    </p>
+  ))
+}
+
 function StoryboardContent({ storyboard, video, onGenerateVideo }) {
   if (storyboard.loading) {
     return (
@@ -181,11 +198,11 @@ export default function OutputPanel({ sections, storyboard, video, style, onGene
             <span className="review__emoji">{card.emoji}</span>
             <span className="review__label">{card.label}</span>
 
-            {card.text && (
-              <p className={`review__text ${card.type === "narration" ? "review__text--narration" : ""}`}>
-                {card.text}
-              </p>
-            )}
+            {card.text &&
+              renderCardText(
+                card.text,
+                `review__text ${card.type === "narration" ? "review__text--narration" : ""}`,
+              )}
 
             {card.type === "storyboard" && (
               <StoryboardContent storyboard={storyboard} video={video} onGenerateVideo={onGenerateVideo} />

@@ -20,7 +20,11 @@ Point your phone at anything — name any film director — AI generates a cinem
 ## How it works (step by step)
 
 ### 1. Open the app
-Open `localhost:5173` in your browser. Your camera turns on automatically.
+Open the frontend in your browser:
+- Local: `http://localhost:5173`
+- Production: Firebase Hosting (`https://<your-site>.web.app`)
+
+Your camera turns on automatically.
 
 ### 2. Start a session
 Click **Start Directing**. This opens a live connection between your camera and the AI.
@@ -35,11 +39,11 @@ Three input fields, only the first is required:
 The AI sees your camera feed in real-time (1 frame per second). It starts speaking — narrating your scene in the chosen film style, telling you how to move the camera, what lighting to use, and what music would fit. If you provided a creative brief, it weaves that vision into what it sees.
 
 ### 5. Swipe through the director's cards
-When you end the session, the AI's output is parsed into swipeable cards:
+When you end the session, the AI's output is parsed into swipeable cards written in plain English:
 - **Narration** — the spoken scene description
-- **Camera** — specific shot directions (dolly, tracking, close-up, etc.)
-- **Lighting & Color** — color grading and mood
-- **Music & Sound** — soundtrack and sound design cues
+- **Camera** — specific shot directions plus a layman-friendly explanation of how to move/frame the camera
+- **Lighting & Color** — color grading, mood, and what visual changes to make in the scene
+- **Music & Sound** — soundtrack and sound design cues with a simple explanation of the feeling they create
 - **Storyboard** — 3 AI-generated frames showing the final film
 
 ### 6. Generate a video
@@ -53,13 +57,14 @@ Swipe to the Video card. Your cinematic short film plays inline with full contro
 | Layer | Technology |
 |---|---|
 | Frontend | React + Vite |
-| Backend | Python, FastAPI |
+| Backend | Python + FastAPI |
 | AI Agent | Google ADK (Agent Development Kit) |
-| Live Streaming | Gemini Live API (bidirectional audio/video) |
-| Image Generation | Nano Banana 2 (Gemini 3.1 Flash Image Preview) |
-| Video Generation | Google Veo 3.1 |
+| Live Streaming | Gemini Live on Vertex AI |
+| Image Generation | Gemini 2.5 Flash Image on Vertex AI in production, Gemini image preview locally |
+| Video Generation | Veo 3.1 via Vertex AI long-running prediction API |
 | Communication | WebSocket (real-time), REST (storyboard + video) |
 | Testing | pytest + pytest-asyncio (backend), Vitest (frontend) |
+| Deployment | Cloud Run (backend), Firebase Hosting (frontend), GitHub Actions (CI/CD) |
 
 ## Project structure
 
@@ -98,7 +103,8 @@ Swipe to the Video card. Your cinematic short film plays inline with full contro
 ### Prerequisites
 - Python 3.12+
 - Node.js 18+
-- A Google API key with access to Gemini and Veo models
+- For local dev: a Google API key with access to Gemini/Veo
+- For production: a GCP project with Vertex AI, Cloud Run, and Firebase enabled
 
 ### Backend
 
@@ -108,7 +114,7 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
-# Open .env and paste your GOOGLE_API_KEY
+# Open .env and paste your GOOGLE_API_KEY for local development
 uvicorn app.main:app --reload
 ```
 
@@ -169,14 +175,36 @@ Tests cover:
 
 | Variable | Description |
 |---|---|
-| `GOOGLE_GENAI_USE_VERTEXAI` | Set to `FALSE` for Google AI Studio |
-| `GOOGLE_API_KEY` | Your Gemini API key |
+| `GOOGLE_GENAI_USE_VERTEXAI` | `false` for local API-key usage, `true` for Vertex AI / Cloud Run |
+| `GOOGLE_API_KEY` | Gemini API key for local development |
+| `GOOGLE_CLOUD_PROJECT` | Required in production when using Vertex AI |
+| `GOOGLE_CLOUD_LOCATION` | Vertex region, e.g. `us-central1` |
+| `CORS_ORIGINS` | Comma-separated allowed frontend origins |
 
 ### Frontend (`frontend/.env`)
 
 | Variable | Default | Description |
 |---|---|---|
+| `VITE_API_URL` | `http://localhost:8000` | Backend HTTP URL for storyboard/video endpoints |
 | `VITE_WS_URL` | `ws://localhost:8000` | Backend WebSocket URL |
+
+## Production deployment
+
+Production is set up for:
+- Backend: Cloud Run
+- Frontend: Firebase Hosting
+- AI auth: Vertex AI with the Cloud Run service account
+- CI/CD: GitHub Actions on push to `main`
+
+The deploy workflow lives in `.github/workflows/deploy.yml`.
+The full deployment runbook lives in `DEPLOY.md`.
+
+Expected production wiring:
+- Frontend builds with `VITE_API_URL=https://<cloud-run-service>`
+- Frontend builds with `VITE_WS_URL=wss://<cloud-run-service>`
+- Cloud Run sets `GOOGLE_GENAI_USE_VERTEXAI=true`
+- Cloud Run sets `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION`, and `CORS_ORIGINS`
+- Frontend reconnects automatically if the Cloud Run WebSocket times out during a directing session
 
 ## Docker
 
