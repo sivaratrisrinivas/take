@@ -76,14 +76,27 @@ runner = Runner(
 # Gemini client for image generation (separate from ADK)
 # Vertex: set GOOGLE_GENAI_USE_VERTEXAI=true, GOOGLE_CLOUD_PROJECT, GOOGLE_CLOUD_LOCATION; auth via ADC (e.g. Cloud Run SA).
 _use_vertex = os.getenv("GOOGLE_GENAI_USE_VERTEXAI", "").lower() == "true"
-if _use_vertex:
-    image_client = genai.Client(
-        vertexai=True,
-        project=os.getenv("GOOGLE_CLOUD_PROJECT"),
-        location=os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1"),
-    )
-else:
-    image_client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
+image_client = None
+
+
+def _get_image_client():
+    global image_client
+    if image_client is not None:
+        return image_client
+
+    if _use_vertex:
+        image_client = genai.Client(
+            vertexai=True,
+            project=os.getenv("GOOGLE_CLOUD_PROJECT"),
+            location=os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1"),
+        )
+    else:
+        api_key = os.getenv("GOOGLE_API_KEY")
+        if not api_key:
+            raise RuntimeError("GOOGLE_API_KEY is required when Vertex AI is disabled")
+        image_client = genai.Client(api_key=api_key)
+
+    return image_client
 
 vertex_credentials = None
 storage_client = None
@@ -158,6 +171,7 @@ async def generate_storyboard(req: StoryboardRequest):
     )
 
     try:
+        client = _get_image_client()
         # Build content parts
         contents = [prompt]
 
@@ -173,7 +187,7 @@ async def generate_storyboard(req: StoryboardRequest):
             ]
 
         response = await asyncio.to_thread(
-            image_client.models.generate_content,
+            client.models.generate_content,
             model=IMAGE_MODEL,
             contents=contents,
             config=types.GenerateContentConfig(
@@ -320,6 +334,7 @@ async def generate_video(req: VideoRequest):
     )
 
     try:
+        image_api_client = _get_image_client()
         compressed_image = None
         if req.storyboard_image_b64:
             try:
@@ -363,8 +378,8 @@ async def generate_video(req: VideoRequest):
                     },
                 }
 
-                async with httpx.AsyncClient(timeout=60) as client:
-                    start_resp = await client.post(
+                async with httpx.AsyncClient(timeout=60) as http_client:
+                    start_resp = await http_client.post(
                         f"{base_url}:predictLongRunning",
                         headers={
                             "Authorization": f"Bearer {token}",
@@ -379,7 +394,7 @@ async def generate_video(req: VideoRequest):
                     poll_json = None
                     for i in range(max_polls):
                         await asyncio.sleep(10)
-                        poll_resp = await client.post(
+                        poll_resp = await http_client.post(
                             f"{base_url}:fetchPredictOperation",
                             headers={
                                 "Authorization": f"Bearer {token}",
@@ -428,7 +443,7 @@ async def generate_video(req: VideoRequest):
                 )
 
             operation = await asyncio.to_thread(
-                image_client.models.generate_videos,
+                image_api_client.models.generate_videos,
                 **kwargs,
             )
 
@@ -438,7 +453,7 @@ async def generate_video(req: VideoRequest):
                     break
                 await asyncio.sleep(10)
                 operation = await asyncio.to_thread(
-                    image_client.operations.get, operation
+                    image_api_client.operations.get, operation
                 )
 
             if not operation.done:
@@ -451,7 +466,7 @@ async def generate_video(req: VideoRequest):
 
             generated_video = operation.response.generated_videos[0]
             await asyncio.to_thread(
-                image_client.files.download,
+                image_api_client.files.download,
                 file=generated_video.video,
             )
             import tempfile
