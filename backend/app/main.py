@@ -334,7 +334,6 @@ async def generate_video(req: VideoRequest):
     )
 
     try:
-        image_api_client = _get_image_client()
         compressed_image = None
         if req.storyboard_image_b64:
             try:
@@ -442,6 +441,7 @@ async def generate_video(req: VideoRequest):
                     mime_type="image/jpeg",
                 )
 
+            image_api_client = _get_image_client()
             operation = await asyncio.to_thread(
                 image_api_client.models.generate_videos,
                 **kwargs,
