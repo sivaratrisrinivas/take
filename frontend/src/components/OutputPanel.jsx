@@ -26,7 +26,7 @@ function renderCardText(text, className) {
   ))
 }
 
-function StoryboardContent({ storyboard, video, onGenerateVideo }) {
+function StoryboardContent({ storyboard, video, onGenerateVideo, videoLocked }) {
   if (storyboard.loading) {
     return (
       <div className="sb-loading">
@@ -53,7 +53,7 @@ function StoryboardContent({ storyboard, video, onGenerateVideo }) {
           />
         </div>
       ))}
-      {onGenerateVideo && storyboard.images?.length > 0 && (
+      {onGenerateVideo && storyboard.images?.length > 0 && !videoLocked && (
         <button
           className="btn-generate"
           onClick={(e) => { e.stopPropagation(); onGenerateVideo() }}
@@ -103,7 +103,16 @@ function VideoContent({ video, onGenerateVideo }) {
   return null
 }
 
-export default function OutputPanel({ sections, storyboard, video, style, onGenerateVideo, onNewSession }) {
+export default function OutputPanel({
+  sections,
+  storyboard,
+  video,
+  style,
+  storyboardLocked,
+  videoLocked,
+  onGenerateVideo,
+  onNewSession,
+}) {
   const [currentIndex, setCurrentIndex] = useState(0)
   const [drag, setDrag] = useState({ active: false, startX: 0, dx: 0 })
 
@@ -205,7 +214,12 @@ export default function OutputPanel({ sections, storyboard, video, style, onGene
               )}
 
             {card.type === "storyboard" && (
-              <StoryboardContent storyboard={storyboard} video={video} onGenerateVideo={onGenerateVideo} />
+              <StoryboardContent
+                storyboard={storyboard}
+                video={video}
+                onGenerateVideo={onGenerateVideo}
+                videoLocked={videoLocked}
+              />
             )}
 
             {card.type === "video" && (

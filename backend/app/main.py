@@ -22,7 +22,7 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent.parent / ".env")
 
 # pylint: disable=wrong-import-position
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect  # noqa: E402
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 from google import genai  # noqa: E402
 from google.adk.agents.live_request_queue import LiveRequestQueue  # noqa: E402
@@ -112,6 +112,8 @@ IMAGE_MODEL = (
     else "gemini-3.1-flash-image-preview"
 )
 
+DEVELOPER_IMAGE_MODEL = "gemini-3.1-flash-image-preview"
+
 # ---------------------------------------------------------------------------
 # Health check (kept for ops / Docker)
 # ---------------------------------------------------------------------------
@@ -155,7 +157,7 @@ Generate ONLY the image, no text response."""
 
 
 @app.post("/api/storyboard")
-async def generate_storyboard(req: StoryboardRequest):
+async def generate_storyboard(req: StoryboardRequest, request: Request):
     """Generate a cinematic storyboard frame using Gemini image generation."""
     logger.info("Storyboard request: style=%s", req.style)
 
@@ -171,7 +173,13 @@ async def generate_storyboard(req: StoryboardRequest):
     )
 
     try:
-        client = _get_image_client()
+        override_key = request.headers.get("x-gemini-api-key")
+        if override_key:
+            client = genai.Client(api_key=override_key)
+            model_name = DEVELOPER_IMAGE_MODEL
+        else:
+            client = _get_image_client()
+            model_name = IMAGE_MODEL
         # Build content parts
         contents = [prompt]
 
@@ -188,7 +196,7 @@ async def generate_storyboard(req: StoryboardRequest):
 
         response = await asyncio.to_thread(
             lambda: client.models.generate_content(
-                model=IMAGE_MODEL,
+                model=model_name,
                 contents=contents,
                 config=types.GenerateContentConfig(
                     response_modalities=["TEXT", "IMAGE"],
@@ -312,7 +320,7 @@ Create a single continuous cinematic shot with strong atmosphere, clear composit
 
 
 @app.post("/api/generate-video")
-async def generate_video(req: VideoRequest):
+async def generate_video(req: VideoRequest, request: Request):
     """Generate a cinematic video clip using Veo 3.1."""
     logger.info("Video generation request: style=%s", req.style)
 
@@ -335,6 +343,9 @@ async def generate_video(req: VideoRequest):
     )
 
     try:
+        override_key = request.headers.get("x-gemini-api-key")
+        developer_client = genai.Client(api_key=override_key) if override_key else None
+
         compressed_image = None
         if req.storyboard_image_b64:
             try:
@@ -356,6 +367,58 @@ async def generate_video(req: VideoRequest):
                 logger.warning("Could not process storyboard image: %s", img_err)
 
         async def try_generate(prompt_text: str, use_image: bool):
+            # Prefer user-supplied Gemini API key when present (Developer API path)
+            if developer_client is not None:
+                kwargs = {
+                    "model": VEO_MODEL,
+                    "prompt": prompt_text,
+                    "config": types.GenerateVideosConfig(
+                        aspect_ratio="16:9",
+                    ),
+                }
+                if use_image and compressed_image:
+                    kwargs["image"] = types.Image(
+                        image_bytes=compressed_image,
+                        mime_type="image/jpeg",
+                    )
+
+                operation = await asyncio.to_thread(
+                    lambda: developer_client.models.generate_videos(**kwargs)
+                )
+
+                max_polls = 60
+                for _ in range(max_polls):
+                    if operation.done:
+                        break
+                    await asyncio.sleep(10)
+                    operation = await asyncio.to_thread(
+                        lambda: developer_client.operations.get(operation)
+                    )
+
+                if not operation.done:
+                    logger.error("Veo (developer API) generation timed out after %d polls", max_polls)
+                    return None, "Video generation timed out"
+
+                if not operation.response or not operation.response.generated_videos:
+                    logger.error("Veo (developer API) returned no videos. Response: %s", operation.response)
+                    return None, "Video generation returned no results"
+
+                generated_video = operation.response.generated_videos[0]
+                await asyncio.to_thread(
+                    lambda: developer_client.files.download(file=generated_video.video)
+                )
+                import tempfile
+                with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
+                    tmp_path = tmp.name
+                generated_video.video.save(tmp_path)
+                with open(tmp_path, "rb") as f:
+                    video_data = f.read()
+                os.unlink(tmp_path)
+                return {
+                    "video_bytes": video_data,
+                    "mime_type": "video/mp4",
+                }, None
+
             if _use_vertex:
                 token = await asyncio.to_thread(_get_vertex_access_token)
                 base_url = (
