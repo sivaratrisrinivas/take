@@ -187,15 +187,16 @@ async def generate_storyboard(req: StoryboardRequest):
             ]
 
         response = await asyncio.to_thread(
-            client.models.generate_content,
-            model=IMAGE_MODEL,
-            contents=contents,
-            config=types.GenerateContentConfig(
-                response_modalities=["TEXT", "IMAGE"],
-                image_config=types.ImageConfig(
-                    aspect_ratio="16:9",
+            lambda: client.models.generate_content(
+                model=IMAGE_MODEL,
+                contents=contents,
+                config=types.GenerateContentConfig(
+                    response_modalities=["TEXT", "IMAGE"],
+                    image_config=types.ImageConfig(
+                        aspect_ratio="16:9",
+                    ),
                 ),
-            ),
+            )
         )
 
         # Extract generated image
@@ -441,10 +442,8 @@ async def generate_video(req: VideoRequest):
                     mime_type="image/jpeg",
                 )
 
-            image_api_client = _get_image_client()
             operation = await asyncio.to_thread(
-                image_api_client.models.generate_videos,
-                **kwargs,
+                lambda: _get_image_client().models.generate_videos(**kwargs)
             )
 
             max_polls = 60
@@ -453,7 +452,7 @@ async def generate_video(req: VideoRequest):
                     break
                 await asyncio.sleep(10)
                 operation = await asyncio.to_thread(
-                    image_api_client.operations.get, operation
+                    lambda: _get_image_client().operations.get(operation)
                 )
 
             if not operation.done:
@@ -466,8 +465,7 @@ async def generate_video(req: VideoRequest):
 
             generated_video = operation.response.generated_videos[0]
             await asyncio.to_thread(
-                image_api_client.files.download,
-                file=generated_video.video,
+                lambda: _get_image_client().files.download(file=generated_video.video)
             )
             import tempfile
             with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
