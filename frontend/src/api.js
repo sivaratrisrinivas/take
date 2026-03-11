@@ -1,4 +1,5 @@
 const WS_BASE_URL = import.meta.env.VITE_WS_URL ?? "ws://localhost:8000"
+const WS_OPEN_STATE = globalThis.WebSocket?.OPEN ?? 1
 
 /**
  * Open a bidi-streaming WebSocket to the ADK backend.
@@ -35,7 +36,7 @@ export function createSession(userId, sessionId, { onEvent, onOpen, onClose }) {
  * Send a text command through the WebSocket (e.g. style selection).
  */
 export function sendText(ws, text) {
-  if (ws?.readyState !== WebSocket.OPEN) return
+  if (ws?.readyState !== WS_OPEN_STATE) return
   ws.send(JSON.stringify({ type: "text", text }))
 }
 
@@ -43,7 +44,7 @@ export function sendText(ws, text) {
  * Send a camera frame as a base64 image blob.
  */
 export function sendImage(ws, base64Data, mimeType = "image/jpeg") {
-  if (ws?.readyState !== WebSocket.OPEN) return
+  if (ws?.readyState !== WS_OPEN_STATE) return
   // Strip data URI prefix if present
   const raw = base64Data.includes(",") ? base64Data.split(",")[1] : base64Data
   ws.send(JSON.stringify({ type: "image", data: raw, mimeType }))
@@ -53,6 +54,6 @@ export function sendImage(ws, base64Data, mimeType = "image/jpeg") {
  * Send raw PCM16 audio as a binary frame.
  */
 export function sendAudio(ws, pcmArrayBuffer) {
-  if (ws?.readyState !== WebSocket.OPEN) return
+  if (ws?.readyState !== WS_OPEN_STATE) return
   ws.send(pcmArrayBuffer)
 }
