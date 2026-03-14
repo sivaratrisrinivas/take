@@ -17,27 +17,6 @@ const SCREEN = {
   REVIEW: "review",
 }
 
-const STORAGE_KEYS = {
-  storyboardUsed: "take_storyboard_used",
-  videoUsed: "take_video_used",
-}
-
-function hasUsedOnce(key) {
-  if (typeof window === "undefined") return false
-  try {
-    return window.localStorage.getItem(key) === "1"
-  } catch {
-    return false
-  }
-}
-
-function markUsedOnce(key) {
-  if (typeof window === "undefined") return
-  try {
-    window.localStorage.setItem(key, "1")
-  } catch {}
-}
-
 class AudioPlayer {
   constructor(sampleRate = 24000) {
     this.sampleRate = sampleRate
@@ -114,8 +93,6 @@ export default function App() {
   const [storyboard, setStoryboard] = useState(null)
   const [video, setVideo] = useState(null)
   const [reconnecting, setReconnecting] = useState(false)
-  const [storyboardLocked, setStoryboardLocked] = useState(() => hasUsedOnce(STORAGE_KEYS.storyboardUsed))
-  const [videoLocked, setVideoLocked] = useState(() => hasUsedOnce(STORAGE_KEYS.videoUsed))
 
   useEffect(() => {
     screenRef.current = screen
@@ -319,9 +296,7 @@ export default function App() {
   /* ── Storyboard (uses real parsed sections) ── */
   const generateStoryboard = useCallback(
     async (transcript) => {
-      if (storyboardLocked || storyboardGeneratedRef.current || !selectedStyle || !transcript) return
-      setStoryboardLocked(true)
-      markUsedOnce(STORAGE_KEYS.storyboardUsed)
+      if (storyboardGeneratedRef.current || !selectedStyle || !transcript) return
       storyboardGeneratedRef.current = true
       setStoryboard({ loading: true })
 
@@ -364,7 +339,7 @@ export default function App() {
         setStoryboard({ error: "Storyboard generation failed" })
       }
     },
-    [selectedStyle, selectedMovies, selectedScene, captureFrame, parsedSections, storyboardLocked],
+    [selectedStyle, selectedMovies, selectedScene, captureFrame, parsedSections],
   )
 
   useEffect(() => {
@@ -375,9 +350,7 @@ export default function App() {
 
   /* ── Video generation (uses real parsed sections) ── */
   const generateVideoClip = useCallback(async () => {
-    if (videoLocked || !selectedStyle || !transcriptText || video?.loading) return
-    setVideoLocked(true)
-    markUsedOnce(STORAGE_KEYS.videoUsed)
+    if (!selectedStyle || !transcriptText || video?.loading) return
     setVideo({ loading: true })
 
     try {
@@ -411,7 +384,7 @@ export default function App() {
     } catch {
       setVideo({ error: "Video generation failed" })
     }
-  }, [selectedStyle, selectedMovies, selectedScene, transcriptText, parsedSections, storyboard, video?.loading, videoLocked])
+  }, [selectedStyle, selectedMovies, selectedScene, transcriptText, parsedSections, storyboard, video?.loading])
 
   useEffect(() => {
     return () => {
@@ -492,8 +465,6 @@ export default function App() {
           storyboard={storyboard}
           video={video}
           style={selectedStyle}
-          storyboardLocked={storyboardLocked}
-          videoLocked={videoLocked}
           onGenerateVideo={generateVideoClip}
           onNewSession={handleNewSession}
         />
