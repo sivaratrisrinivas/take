@@ -66,6 +66,55 @@ Swipe to the Video card. Your cinematic short film plays inline with full contro
 | Testing | pytest + pytest-asyncio (backend), Vitest (frontend) |
 | Deployment | Cloud Run (backend), Firebase Hosting (frontend), GitHub Actions (CI/CD) |
 
+## Architecture
+
+High-level system diagram: frontend talks to the backend over WebSocket (live) and REST (storyboard, video); the backend uses Google ADK to stream with Gemini Live and calls Vertex AI for image and video generation.
+
+```mermaid
+flowchart LR
+  subgraph Client["Client (Browser)"]
+    UI[React + Vite]
+    Cam[Camera / Mic]
+    UI --> Cam
+  end
+
+  subgraph Hosting["Hosting"]
+    FE[Firebase Hosting]
+  end
+
+  subgraph Backend["Backend (Cloud Run)"]
+    API[FastAPI]
+    WS[WebSocket]
+    REST[REST API]
+    API --> WS
+    API --> REST
+  end
+
+  subgraph Google["Google Cloud / Gemini"]
+    ADK[Google ADK]
+    Live[Gemini Live]
+    Img[Gemini 2.5 Flash Image]
+    Veo[Veo 3.1]
+    ADK --> Live
+  end
+
+  Client --> FE
+  FE --> Backend
+  WS <-->|"camera frames, audio ↔ director voice"| Live
+  REST -->|"storyboard prompt + optional frame"| Img
+  REST -->|"prompt + storyboard image"| Veo
+  API --> ADK
+```
+
+| Connection | Protocol | Purpose |
+|------------|----------|---------|
+| Frontend → Backend | WebSocket | Live camera frames (1 fps) + audio to Gemini Live; receive agent voice (PCM). |
+| Frontend → Backend | REST `POST /api/storyboard` | Generate storyboard image(s) from narration, camera, lighting (Gemini Image). |
+| Frontend → Backend | REST `POST /api/generate-video` | Generate 8s cinematic clip (Veo 3.1), optional image conditioning. |
+| Backend → Vertex AI | ADK / GenAI SDK | Gemini Live (agent), Gemini Image (storyboard), Veo 3.1 (video). |
+
+*For the hackathon form: upload a screenshot of the diagram above (e.g. from GitHub’s rendered README) or export it from [Mermaid Live](https://mermaid.live) as PNG.*
+
 ## Project structure
 
 ```
@@ -159,6 +208,41 @@ npm test
 Tests cover:
 - Transcript parser: spoken markers, keyword fallback, markdown stripping, edge cases
 - WebSocket helpers: sendText, sendImage, sendAudio, closed socket handling
+
+## Reproducible Testing
+
+You can reproduce the same test run as CI locally. No API keys or environment variables are required; external APIs (Gemini, Veo) are mocked in tests.
+
+**Versions (match CI for identical results):**
+- Python **3.12**
+- Node **20** (LTS)
+
+**Backend (28 tests):**
+
+```bash
+cd backend
+python3.12 -m venv .venv
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
+pip install --upgrade pip
+pip install -r requirements.txt pytest pytest-asyncio
+python -m pytest tests/ -v
+```
+
+**Frontend (16 tests):**
+
+```bash
+cd frontend
+npm ci
+npm test -- --run
+```
+
+**Run both from repo root:**
+
+```bash
+(cd backend && .venv/bin/python -m pytest tests/ -v) && (cd frontend && npm ci && npm test -- --run)
+```
+
+(Ensure `backend/.venv` exists and backend deps are installed first.)
 
 ## API endpoints
 
